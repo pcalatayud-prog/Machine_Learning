@@ -1,0 +1,3 @@
+library("arulesViz")
+data("Groceries")
+
