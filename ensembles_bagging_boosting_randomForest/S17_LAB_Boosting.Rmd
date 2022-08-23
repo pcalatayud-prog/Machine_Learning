@@ -1,0 +1,409 @@
+---
+title: "Ensemble Methods"
+subtitle: "Adaptive and Gradient Boosting"
+author: <p>Santander Meteorology Group</p>
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+\fontfamily{cmr}
+\fontsize{11}{22}
+\selectfont
+
+# Objetivo:
+
+En la presente práctica trataremos de profundizar en la utilización de los métodos de basados ensembles y compararlos con su contrapartida basada en árboles. Para ello, en primer lugar instalaremos los paquetes asociados a los métodos de ensembles
+
+```{r, eval = FALSE, echo = TRUE, warning=FALSE}
+install.packages("randomForest")
+install.packages("adabag")
+install.packages("gbm")
+```
+
+y cargamos las librerías correspondientes:
+
+```{r, eval = TRUE, echo = TRUE, warning=FALSE, message=FALSE}
+library(tree) ## arboles
+library(rpart) ## Tree-based model
+library(randomForest) ## bagging: random forests
+library(adabag) ## boosting: adaptive boosting
+library(gbm) ## boosting: Gradient boosting
+library(caret)
+library(MASS)
+```
+
+A lo largo de la práctica usaremos varios datasets para ejemplificar el uso de las diferentes funciones.
+
+# Clasificación:
+
+## Ejemplo: Iris dataset
+
+Cargamos los datos y definimos los conjuntos de `train` y de `test`:
+
+```{r, eval = TRUE, echo = TRUE, warning=FALSE}
+## train/test partition
+set.seed(23)
+n <- nrow(iris)
+indtrain <- sample(1:n, round(0.75*n))  # indices for train
+indtest <- setdiff(1:n, indtrain)  # indices for test
+```
+
+y predecimos y evaluamos sobre ambos conjuntos utilizando un árbol de decisión:
+
+```{r, eval = TRUE, echo = TRUE, warning=FALSE}
+## Single Tree:
+t <- tree(Species ~., iris, subset = indtrain, 
+          control = tree.control(length(indtrain), mincut = 1, minsize = 2, mindev = 0))
+## Prediction for test
+pred.t.test <- predict(t, iris[indtest, ], type = "class")
+## Prediction for train
+pred.t.train <- predict(t, iris[indtrain, ], type = "class")
+## Accuracy
+print(c(sum(diag(table(pred.t.test, iris$Species[indtest]))) / length(indtest), 
+        sum(diag(table(pred.t.train, iris$Species[indtrain]))) / length(indtrain)))
+```
+
+A continuación, siguiendo con lo visto en la sesión anterior, realizamos la predicción considerando los `random forest` utilizando el valor por defector para el número de variables seleccionadas para cada árbol:
+
+```{r, eval = TRUE, echo = TRUE, warning=FALSE}
+set.seed(23)
+## Bagging: Random Forests
+rf <- randomForest(Species ~., iris , subset = indtrain, ntree = 500, mtry = 2)
+
+# OOB error
+plot(rf$err.rate[, 1], type = "b", xlab = "no trees",
+ylab = "OBB error")
+grid()
+```
+
+A la vista de los resultados consideramos el número de árboles óptimo sobre 100 dado que es la zona de estabilización del parámetros de validación:
+
+```{r, eval = TRUE, echo = TRUE, warning=FALSE}
+## Bagging: Random Forests
+rf <- randomForest(Species ~., iris , subset = indtrain, ntree = 100, mtry = 2)
+
+## Prediction for test
+pred.rf.test <- predict(rf, iris[indtest, ])
+## Prediction for train
+pred.rf.train <- predict(rf, iris[indtrain, ])
+## Accuracy
+print(c(sum(diag(table(pred.rf.test, iris$Species[indtest]))) / length(indtest), 
+        sum(diag(table(pred.rf.train, iris$Species[indtrain]))) / length(indtrain)))
+```
+
+Consideremos ahora el método estándar de boosting, el Adaptive Boosting (adaboost). Para ello, revisemos inicialmente los parámetros de la función [boosting](https://www.rdocumentation.org/packages/adabag/versions/4.2/topics/boosting):
+
+```{r, eval = FALSE, echo = TRUE, warning=FALSE}
+## Boosting: Adaptive Boosting (AdaBoost)
+? boosting
+```
+
+Dado el tamaño del dataset, consideremos un número limitado de árboles, pero suficientemente grande, para ver el número óptimo de árboles a utilizar:
+
+```{r, eval = TRUE, echo = TRUE, warning=FALSE}
+# AdaBoost with 20 trees (mfinal)
+ab = boosting(Species ~., iris[indtrain, ], mfinal = 20, boos = FALSE)
+# train errors as a function of number of trees
+plot(errorevol(ab, iris[indtrain, ]))
+grid()
+```
+
+Como vemos, a partir de 5 árboles ya el error es nulo, de modo que el número máximo de árboles debe ser a lo sumo 5.
+
+```{r, eval = TRUE, echo = TRUE, warning=FALSE}
+## Boosting: Adaptive Boosting (AdaBoost)
+## 20 trees (mfinal)
+ab <- boosting(Species ~., iris[indtrain, ], mfinal = 5)
+## Prediction for test
+pred.ab.test <- predict(ab, iris[indtest, ])
+## Prediction for train
+pred.ab.train <- predict(ab, iris[indtrain, ])
+## Accuracy
+c(sum(diag(table(pred.ab.test$class, iris$Species[indtest]))) / length(indtest), 
+  sum(diag(table(pred.ab.train$class, iris$Species[indtrain]))) / length(indtrain))
+```
+
+Al considerar árboles, y como dice la ayuda, podemos definir los parámetros de control de los árboles construidos con la función `rpart`:
+
+```{r, eval = TRUE, echo = TRUE, warning=FALSE}
+## Boosting: Adaptive Boosting (AdaBoost)
+ab <- boosting(Species ~., iris[indtrain, ], mfinal = 5, 
+               control=rpart.control(minsplit = 2, minbucket = 1, cp = 0.01))  
+## Prediction for test
+pred.ab.test <- predict(ab, iris[indtest, ])
+## Prediction for train
+pred.ab.train <- predict(ab, iris[indtrain, ])
+## Accuracy
+c(sum(diag(table(pred.ab.test$class, iris$Species[indtest]))) / length(indtest), 
+  sum(diag(table(pred.ab.train$class, iris$Species[indtrain]))) / length(indtrain))
+```
+
+Finalmente, consideremos el Gradient Boosting para lo cual revisemos los parámetros de la función `gbm`:
+
+```{r, eval = FALSE, echo = TRUE, warning=FALSE}
+? gbm
+```
+
+Los argumentos base vistos en la sesión teórica se corresponden con:
+
+ * shrinkage
+ * n.trees
+ * interaction.depth
+
+Si bien hay otros argumentos que permiten el control de las caracteristicas de los arboles, la validacion cruzada o la aleatorizacion del conjunto de entrenamiento.
+
+```{r, eval = TRUE, echo = TRUE, warning=FALSE}
+## Boosting: Gradient Boosting
+gb <- gbm(Species~., data=iris[indtrain, ], n.trees=1000, interaction.depth=20, 
+          shrinkage = 0.01)
+```
+
+¿Cuántos árboles seleccionarías?
+
+```{r, eval = TRUE, echo = TRUE, warning=FALSE}
+## Prediction for test
+pred.gb.test <- predict(object = gb, newdata = iris[indtest, ], n.trees = 1000, 
+                        type = "response")
+## Prediction for train
+pred.gb.train <- predict(object = gb, newdata = iris[indtrain, ], n.trees = 1000, 
+                         type = "response")
+## Accuracy
+c(sum(diag(table(attributes(pred.gb.test)$dimnames[[2]][apply(pred.gb.test, FUN = which.max, MARGIN = 1)], 
+                 iris$Species[indtest]))) / length(indtest), 
+  sum(diag(table(attributes(pred.gb.test)$dimnames[[2]][apply(pred.gb.train, FUN = which.max, MARGIN = 1)], 
+                 iris$Species[indtrain]))) / length(indtrain))
+```
+
+Como dijimos, pueden incluirse parámetros que controlen la validación cruzada, obteniendo el valor óptimo:
+
+```{r, eval = TRUE, echo = TRUE, warning=FALSE}
+gb.cv <- gbm(Species~., data=iris[indtrain, ], n.trees=1000, 
+             interaction.depth=20, shrinkage = 0.01, cv.folds = 4)
+ntree_opt_cv <- gbm.perf(gb.cv, method = "cv")
+ntree_opt_oob <- gbm.perf(gb.cv, method = "OOB")
+
+print(ntree_opt_cv)
+print(ntree_opt_oob)
+```
+
+Que podemos usar en el ajuste:
+
+```{r, eval = TRUE, echo = TRUE, warning=FALSE}
+gb <- gbm(Species~., data=iris[indtrain, ], n.trees=ntree_opt_cv, 
+          interaction.depth=20, shrinkage = 0.01)
+print(gb)
+summary(gb)
+## Prediction for test
+pred.gb.test <- predict(object = gb, newdata = iris[indtest, ], 
+                        n.trees = ntree_opt_cv, type = "response")
+## Prediction for train
+pred.gb.train <- predict(object = gb, newdata = iris[indtrain, ], 
+                         n.trees = ntree_opt_cv, type = "response")
+## Accuracy
+c(sum(diag(table(attributes(pred.gb.test)$dimnames[[2]][apply(pred.gb.test, FUN = which.max, MARGIN = 1)], 
+                 iris$Species[indtest]))) / length(indtest), 
+  sum(diag(table(attributes(pred.gb.test)$dimnames[[2]][apply(pred.gb.train, FUN = which.max, MARGIN = 1)], 
+                 iris$Species[indtrain]))) / length(indtrain))
+```
+
+Nuevas implementaciones optimizan el algoritmo realizando el ajuste de forma más eficiente, las cuales probaremos con el dataset `Meteo`:
+
+```{r, eval = FALSE, echo = TRUE, warning=FALSE}
+install.packages("xgboost") ## Extreme Gradient Boosting
+```
+
+## Ejemplo: Meteo dataset
+
+```{r, eval = TRUE, echo = TRUE, warning=FALSE}
+library(MASS)
+library(tree)
+library(randomForest)
+library(adabag)
+library(gbm)
+library(caret)
+library(xgboost)
+```
+
+Cargamos los datos
+
+```{r, eval = FALSE, echo = TRUE, warning=FALSE}
+load("~/meteo.RData")
+```
+
+```{r, eval = TRUE, echo = FALSE, warning=FALSE}
+load("/home/sixto/Dropbox/M1966_DataMining/datasets/meteo.RData")
+```
+
+y definimos los conjuntos de `train` y de `test`:
+ 
+```{r, eval = TRUE, echo = TRUE, warning=FALSE}
+## Keeping the first 10 years (3650 days) for this example
+n <- 3650
+y <- y[1:n]
+x <- x[1:n, ]
+## train/test partition
+set.seed(23)
+indtrain <- sample(1:n, round(0.75*n))  # indices for train
+indtest <- setdiff(1:n, indtrain)  # indices for test
+```
+
+Sigamos con el caso de clasificación:
+
+```{r, eval = TRUE, echo = TRUE, warning=FALSE}
+## binary occurrence (1/0)
+occ <- y
+occ[which(y < 1)] <- 0
+occ[which(y >= 1)] <- 1
+## dataframe for occurrence
+df.occ <- data.frame(y.occ = as.factor(occ), predictors = x)
+```
+
+y probemos las diferentes técnicas vistas a lo largo del curso.
+
+### Decision Trees:
+
+```{r, eval = TRUE, echo = TRUE, warning=FALSE}
+## Single Tree:
+t <- tree(y.occ ~., df.occ, subset = indtrain, 
+          control = tree.control(length(indtrain), mincut = 1, minsize = 2, mindev = 0))
+## Prediction for test
+pred.t.test <- predict(t, df.occ[indtest, ], type = "class")
+## Prediction for train
+pred.t.train <- predict(t, df.occ[indtrain, ], type = "class")
+## Accuracy
+print(c(sum(diag(table(pred.t.test, df.occ$y.occ[indtest]))) / length(indtest), 
+        sum(diag(table(pred.t.train, df.occ$y.occ[indtrain]))) / length(indtrain)))
+```
+
+Para discutir más en profundidad la validación obtengamos las matrices de confusión para el test
+
+```{r, eval = TRUE, echo = TRUE, warning=FALSE}
+confusionMatrix(pred.t.test, df.occ$y.occ[indtest])
+```
+
+y el train:
+
+```{r, eval = TRUE, echo = TRUE, warning=FALSE}
+confusionMatrix(pred.t.train, df.occ$y.occ[indtrain])
+```
+
+### Bagging: Random Forests
+
+```{r, eval = TRUE, echo = TRUE, warning=FALSE}
+## Single Tree:
+rf <- randomForest(y.occ ~., df.occ, subset = indtrain, ntree = 500)
+## Prediction for test
+pred.rf.test <- predict(rf, df.occ[indtest, ])
+## Prediction for train
+pred.rf.train <- predict(rf, df.occ[indtrain, ])
+## Accuracy
+print(c(sum(diag(table(pred.rf.test, df.occ$y.occ[indtest]))) / length(indtest), 
+        sum(diag(table(pred.rf.train, df.occ$y.occ[indtrain]))) / length(indtrain)))
+```
+
+Para discutir más en profundidad la validación obtengamos las matrices de confusión para el test
+
+```{r, eval = TRUE, echo = TRUE, warning=FALSE}
+confusionMatrix(pred.rf.test, df.occ$y.occ[indtest])
+```
+
+y el train:
+
+```{r, eval = TRUE, echo = TRUE, warning=FALSE}
+confusionMatrix(pred.rf.train, df.occ$y.occ[indtrain])
+```
+
+### Boosting: Adaptive Boosting (AdaBoost)
+
+```{r, eval = TRUE, echo = TRUE, warning=FALSE}
+## 20 trees (mfinal)
+ab <- boosting(y.occ ~., df.occ[indtrain, ], mfinal = 20)
+## Prediction for test
+pred.ab.test <- predict(ab, df.occ[indtest, ])
+## Prediction for train
+pred.ab.train <- predict(ab, df.occ[indtrain, ])
+## Accuracy
+print(c(sum(diag(table(pred.ab.test$class, df.occ$y.occ[indtest]))) / length(indtest), 
+        sum(diag(table(pred.ab.train$class, df.occ$y.occ[indtrain]))) / length(indtrain)))
+```
+
+Para discutir más en profundidad la validación obtengamos las matrices de confusión para el test
+
+```{r, eval = TRUE, echo = TRUE, warning=FALSE}
+confusionMatrix(as.factor(pred.ab.test$class), df.occ$y.occ[indtest])
+```
+
+y el train:
+
+```{r, eval = TRUE, echo = TRUE, warning=FALSE}
+confusionMatrix(as.factor(pred.ab.train$class), df.occ$y.occ[indtrain])
+```
+
+### Boosting: eXtreme Gradient Boosting
+
+```{r, eval = TRUE, echo = TRUE, warning=FALSE}
+df.gb.occ <- df.occ
+df.gb.occ$y.occ <- as.character(df.gb.occ$y.occ)
+
+gb <- xgboost(data = x[indtrain,], label = df.gb.occ$y.occ[indtrain], max.depth = 6, eta = 1, nrounds = 1,
+               nthread = 2, objective = "binary:logistic")
+print(gb)
+summary(gb)
+
+## Prediction for test
+pred.gb.test <- predict(gb, newdata = x[indtest, ], type = "response")
+## Prediction for train
+pred.gb.train <- predict(gb, newdata = x[indtrain, ], type = "response")
+## Accuracy
+pred.gb.test.bin <- as.factor(ifelse(pred.gb.test>mean(as.numeric(df.gb.occ$y.occ[indtrain])),1,0))
+pred.gb.train.bin <- as.factor(ifelse(pred.gb.train>mean(as.numeric(df.gb.occ$y.occ[indtrain])),1,0))
+
+print(c(sum(diag(table(pred.gb.test.bin, df.gb.occ$y.occ[indtest]))) / length(indtest), 
+        sum(diag(table(pred.gb.train.bin, df.gb.occ$y.occ[indtrain]))) / length(indtrain)))
+```
+
+Para discutir más en profundidad la validación obtengamos las matrices de confusión para el test
+
+```{r, eval = TRUE, echo = TRUE, warning=FALSE}
+confusionMatrix(pred.gb.test.bin, df.occ$y.occ[indtest])
+```
+
+y el train:
+
+```{r, eval = TRUE, echo = TRUE, warning=FALSE}
+confusionMatrix(pred.gb.train.bin, df.occ$y.occ[indtrain])
+```
+
+# Predicción:
+
+A modo de ejemplo hemos utilizado el dataset `Boston` para problemas de predicción.
+
+```{r, eval = FALSE, echo = TRUE, warning=FALSE}
+library(MASS)
+
+n <- nrow(Boston)
+# train/test partition
+indtrain <- sample(1:n, round(0.75*n))  # indices for train
+indtest <- setdiff(1:n, indtrain)  # indices for test
+
+# RF
+rf <- randomForest(medv ~., Boston , subset = indtrain)
+# RF configuration?
+
+# OOB error?
+plot(rf$mse, type = "l", xlab = "no. trees", ylab = "OOB error")
+grid()
+```
+
+Extender el análisis hecho para el problema de clasificación a este dataset, comparando las diferentes aproximaciones.
+
+# Session Info:
+
+```{r, echo=FALSE, eval=TRUE, warning=FALSE}
+print(sessionInfo())
+```
