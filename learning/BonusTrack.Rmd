@@ -1,0 +1,248 @@
+---
+title: 'Práctica: Redes Bayesianas Multinomiales'
+subtitle: 'Master in Data Science - Machine Learning II'
+author: "Santander Meteorology Group"
+output:
+  html_document:
+    mathjax: "https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.2/MathJax.js?config=TeX-AMS-MML_HTMLorMML"
+    df_print: paged
+    theme: readable
+    number_sections: true
+    toc: yes
+    toc_float: true
+  pdf_document:
+    highlight: default
+    number_sections: yes
+    toc: yes
+    toc_depth: 3
+  geometry: margin=2in
+---
+
+
+# Introducción a la práctica {#intro}
+
+La presente práctica esta concebida como una primera aproximación a los fundamentos de la Redes Bayesianas. Utilizaremos los datos de una encuesta sobre utilización de medios de transporte. La práctica se centra en la modelización de variables discretas mediante una *Red Bayesiana Multinomial*.
+
+Este tipo de red se construye con variables aleatorias discretas, es decir, que cada variable tiene un número finito de posibles estados. Asimismo, se considera que la probabilidad condicional de cada variable dados sus padres es multinomial, y por lo tanto, ésta viene dada por la tabla de probabilidades correspondientes a las diferentes combinaciones de estados entre las variables implicadas.
+
+La práctica ilustra los pasos a seguir en entorno R para:
+
+1. Construir un grafo acíclico dirigido (DAG, de las siglas en inglés de *directed acyclic graph*)
+2. Definición de la función de probabilidad conjunta (FPC)
+3. Definición de los parámetros del modelo (*aprendizaje paramétrico*)
+4. Obtener nueva información a partir de una evidencia dada (*inferencia*)
+5. Aprendizaje automático del grafo de una red bayesiana a partir de los datos (*aprendizaje estructural*)
+6. Representación gráfica del modelo
+
+
+## Dataset de ejemplo: 'survey'
+
+A partir de los datos de campo recogidos por la encuesta, se investigará la selección de medios de transporte por distintos perfiles de usuarios, y particularmente a la preferencia de tren o coche. Este tipo de análisis se utilizan con frecuencia en la planificación de infraestructuras. Para cada individuo encuestado, se han recopilado datos referenctes a 6 variables discretas. Las abreviaturas de dichas variables se muestran entre paréntesis, y se utilizarán a lo largo de la práctica para referirse a los nodos de la red creada. Tanto las abreviaturas como los nombres de las variables preservan la nomenclatura original del dataset en inglés.
+
+* Edad (`A`): Edad del encuestado, agrupado en los siguientes estados: joven (`young`, < 30 años), adulto (`adult`, 30 < edad <= 60) y anciano (`old`, edad > 60).
+* Sexo (`S`): Sexo del encuestado, con sus dos posibles estado: masculino (`M`) y femenino (`F`).
+* Educación (`E`): Nivel más alto de educación alcanzado. Hasta educación secundaria (`high`) o título universitario (`uni`).
+* Ocupación (`O`): Considera dos estados: trabajador por cuenta ajena (`emp`) o autónomo (`self`).
+* Residencia (`R`): El tamaño de la población de residencia del individuo. Estados posibles: `big` y `small`.
+* Transporte (`T`): El medio de transporte más utilizado por el encuestado para acudir al trabajo, diferenciando 3 posibles estados: `car`, `train` y `other`.
+
+```{r, eval = TRUE, echo = FALSE, message=FALSE}
+library(bnlearn)
+library(RBGL)
+library(gRain)
+library(Rgraphviz)
+```
+
+## Paquetes de R necesarios
+
+Se utilizará el paquete de R `bnlearn` (**b**ayesian **n**etwork **lear**ning), disponible a través del CRAN. Por tanto, su instalación es directa si no lo tenemos previamente instalado:
+
+```{r,eval = FALSE, message=FALSE}
+if (!require(bnlearn)) install.packages("bnlearn")
+```
+
+Además, se necesitan dependencias adicionales para la parte relacionada con la inferencia:
+
+```{r,eval = FALSE}
+# Paquete RBGL (disponible en bioconductor)
+if (!require(RBGL)) {
+      source("http://bioconductor.org/biocLite.R")
+      biocLite("RBGL")
+}
+# Paquete gRain
+if (!require(gRain)) install.packages("gRain")
+```
+
+, y para la parte de visualización de grafos:
+
+```{r,eval = FALSE}
+if (!require(Rgraphviz)) {
+    source("http://bioconductor.org/biocLite.R")
+    biocLite("Rgraphviz")
+}
+```
+
+# Redes Bayesianas gaussianas {#gauss}
+
+Dependiendo del carácter discreto, continuo o mixto de las variables, las funciones probabilidad que definen la función de probabilidad conjunta pertenecen a familias paramétricas específicas, dando lugar a criterios diferentes a la hora de definir dependencias e independencias entre los nodos de la red. Fundamentalmente existen tres tipos: Redes Bayesianas Multinomiales (variables discretas), Gaussianas (variables continuas) y mixtas. Aunque a lo largo de la práctica hemos realizado el desarrollo con variables discretas, en esta sección final introducimos cómo trabajar de forma equivalente con variables continuas.
+
+En una Red Bayesiana Gaussiana se considera que las variables tienen una distribución normal multivariante, $N(\mu, \Sigma)$, cuya función de densidad conjunta (FPC) viene dada por la expresión:
+
+$$
+P(x;\mu,\Sigma)=\frac{1}{\sqrt{2\pi|\Sigma|}}\cdot e^{-\frac{1}{2}(x - \mu)^{T}\Sigma^{-1}(x - \mu)},~~~x,\mu \in \mathbb{R}^k
+$$
+
+donde $\mu$ es el vector $k \times 1$ de las medias de cada variable, $\Sigma$ es la matriz cuadrada ($k \times k$) de covarianzas, $|\Sigma|$ es su determinante, y $\mu^{T}$ denota la traspuesta de $\mu$. De este modo, en una RB Gaussiana esta FPC se especifica por:
+
+
+$$
+f(x_{i}|\pi_{i}) \sim N(\mu_{i} + \sum_{j=1}^{i-1}\beta_{ij}(x_{j}-\mu_{j}), v_{i}),
+$$
+
+donde $\beta_{ij}$ es el coeficiente de $X_j$ en la regresión de $X_i$ sobre sus padres $\Pi_i$, y $v_i=\Sigma_{i}-\Sigma_{i \Pi_{i}}\Sigma^{-1}_{P_{i_{i}}}\Sigma^{T}_{i\Pi_{i}}$, es la varianza condicional de $X_i$, dados $\Pi_{i}=\pi_i$, donde $\Sigma_{i}$ es la varianza incondicional de $X_i$, \Sigma es el vector de covarianzas entre $X_i$ y las variables de $\Pi_i$, y $\Sigma\Pi_{i}$ es la matriz de covarianzas de $\Pi_i$. Nótese que los coeficientes de regresión $\beta_{ij}$ miden el grado de dependencia entre las variables $i$ y $j$, de modo que define los padres de la variable $X_i$.
+
+### Aprendizaje paramétrico y estructural
+
+Como primera aproximación, crearemos una red sencilla compuesta por tres nodos, de acuerdo con la siguiente configuración:
+
+```{r}
+net <- empty.graph(nodes = c("A", "B", "C"))
+modelstring(net) <- "[A][B][C|A:B]"
+```
+
+Para crear una red bayesiana gaussiana a través de las probabilidades condicionadas, debemos definir los coeficientes de regresión de cada variable con respecto a sus padres y la desviación estándar de los residuos de dicha regresión. 
+
+
+```{r}
+distA <- list(coef = c("(Intercept)" = 2), sd = 1)
+distB <- list(coef = c("(Intercept)" = 1), sd = 1.5)
+distC <- list(coef = c("(Intercept)" = 0.5, "A" = 0.75, "B" = 1.32), sd = 0.4)
+cfit = custom.fit(net, dist = list(A = distA, B = distB, C = distC))
+print(cfit)
+```
+
+También podemos incluir los valores y residuos ajustados a cada nodo:
+
+
+```{r}
+distA = list(coef = c("(Intercept)" = 2), fitted = 1:10, resid = rnorm(10))
+distB = list(coef = c("(Intercept)" = 1), fitted = 3:12, resid = rnorm(10))
+distC = list(coef = c("(Intercept)" = 0.5, "A" = 0.75, "B" = 1.32), fitted = 2:11, resid = rnorm(10))
+cfit = custom.fit(net, dist = list(A = distA, B = distB, C = distC))
+print(cfit)
+```
+
+Sin embargo, hay que mantener uno de los dos criterios para todos los nodos de la red. Los coeficientes del modelo de regresión así como los residuos pueden obtenerse a través de la función `lm` (`? lm`) para ajustar modelos lineales.
+
+```{r}
+distA = lm(A ~ 1, data = gaussian.test)
+distB = lm(B ~ 1, data = gaussian.test)
+distC = lm(C ~ A + B, data = gaussian.test)
+cfit = custom.fit(net, dist = list(A = distA, B = distB, C = distC))
+```
+
+Esta opción puede ser conveniente ya que podemos hacer uso de los diferentes argumentos de `lm` y de algoritmos de penalización (`?? penalized`). Nótese que la función `custom.fit` hace varias pruebas respecto a las distribuciones por lo que debemos tener cuidado con los argumentos de entrada. Debe de introducirse exactamente un coeficiente de regresión por cada padre de un nodo, y sus nombres (*labels*) deben coincidir. Ejemplos de errores:
+
+Introducimos un numero incorrecto de coeficientes en el nodo B (ya que B no es padre de A. `wrong number of coefficients error`):
+
+```{r,eval=FALSE}
+distA = list(coef = c("(Intercept)" = 2), sd = 1)
+distB = list(coef = c("(Intercept)" = 1, "A" = 2), sd = 1.5)
+distC = list(coef = c("(Intercept)" = 0.5, "A" = 0.75, "B" = 1.32), sd = 0.4)
+cfit = custom.fit(net, dist = list(A = distA, B = distB, C = distC))
+```
+   
+Las etiquetas de los coeficientes deben coincidir con los nombre de los padres (`wrong.regression.coefficient` error):
+
+```{r,eval=FALSE}
+distA = list(coef = c("(Intercept)" = 2), sd = 1)
+distB = list(coef = c("(Intercept)" = 1), sd = 1.5)
+distC = list(coef = c("(Intercept)" = 0.5, "A" = 0.75, "X" = 1.32), sd = 0.4)
+cfit = custom.fit(net, dist = list(A = distA, B = distB, C = distC))
+```
+
+Si se introducen tanto los residuos como su desviación típica, ambos deben coincidir hasta una cierta precisión numérica (bastante laxa):
+
+```{r,eval=FALSE}
+distA = list(coef = c("(Intercept)" = 2), fitted = 1:10, resid = rnorm(10), sd = 20)
+cfit = custom.fit(net, dist = list(A = distA, B = distB, C = distC))
+```
+
+Los valores perdidos no son aceptables, ni en los valores ajustados ni en los residuos. Se realiza un control por parte de `custom.fit` para garantizar que todos los coeficientes son finitos y los errores tipificados no negativos:
+
+```{r,eval=FALSE}
+distA = list(coef = c("(Intercept)" = 2), fitted = c(NA, 2:10), resid = rnorm(10))
+cfit = custom.fit(net, dist = list(A = distA, B = distB, C = distC))
+```
+
+```{r,eval=FALSE}
+distA = list(coef = c("(Intercept)" = 2), sd = -1)
+cfit = custom.fit(net, dist = list(A = distA, B = distB, C = distC))
+```
+
+Al igual que hicimos en el caso mnultinomial, podemos definir la red bayesiana a través de los datos y de nuestro propio conocimiento experto. Continuando con los datos de ejemplo contenidos en `gaussian.test`:
+
+```{r}
+dag <- model2network("[A][B][E][G][C|A:B][D|B][F|A:D:E:G]")
+fitted <- bn.fit(dag, gaussian.test)
+fitted$F
+```
+
+Por ejemplo, basados en nuestro conocimiento del problema, podemos modificar las dependencias de $F$ definiendo los coeficientes del modo habitual, con el modelo lineal, el modelo lineal penalizado, etc.:
+
+```{r}
+fitted$F = list(coef = c(0, 2, 1, 0.5, 0.5), sd = 0.42)
+```
+
+
+Finalmente, podemos automatizar todo el proceso de un modo similar al de las redes multinomiales:
+
+
+```{r}
+learned <- hc(gaussian.test, debug = FALSE) # Hacemos el ajuste estructural del modelo (hill-climbing)
+dag <- model2network(modelstring(learned)) # Definimos el grafo a partir de las dependencias/independencias encontradas en el paso anterior
+plot(dag) # Representación del grafo
+bn.gauss <- bn.fit(dag, data = gaussian.test, method = "mle") # definimos la red bayesiana incluyendo el ajuste de los parametros de la funcion de probabilidad conjunta.
+```
+
+, explorar las propiedades de la red ajustada:
+
+```{r}
+coefficients(bn.gauss$F)
+str(residuals(bn.gauss$F))
+str(fitted(bn.gauss$F))
+str(fitted(bn.gauss))
+```
+
+, así como realizar gráficos que resuman la información tales como quantile-quantile plots:
+
+```{r}
+bn.fit.qqplot(bn.gauss)
+```
+
+o histogramas de los residuos de los ajustes para cada uno de los nodos:
+
+```{r}
+bn.fit.histogram(bn.gauss)
+```
+
+# Referencias
+
+* Gutiérrez, J.M., Cano, R., Cofiño, A.S., Sordo, C., 2004. Redes probabilísticas y neuronales en las ciencias atmosféricas. Centro de Publicaciones, Ministerio de Medio Ambiente, Madrid, Spain.
+
+* Scutari, M., Denis, J.-B., 2014. Bayesian networks: with examples in R.
+
+* Scutari, M., 2014. Bayesian Network Constraint-Based Structure Learning Algorithms: Parallel and Optimised Implementations in the bnlearn R Package. http://arxiv.org/abs/1406.7648
+
+* r-bayesian-networks. http://www.r-bayesian-networks.org/ (Last accessed 18 Nov 2017)
+
+* Nagarajan, R., Scutari, M. and Lèbre, S. 2013. Bayesian networks in R: with applications in systems biology, Use R! Springer, New York.
+
+# Session info
+
+```{r}
+print(sessionInfo())
+```
+
+
+
