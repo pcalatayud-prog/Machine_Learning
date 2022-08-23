@@ -1,0 +1,72 @@
+---
+title: "Matching Learning l. Practica 02."
+author: "Pablo Calatayud"
+date: "17/03/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Tarea 2.
+
+**El objetivo es diseñar una red neuronal que sea capaz de predecir el valor de la precipitación mediante la información de variables de larga escala. El dataset consiste en 450 predictores y un predictando, la precipitación en Madrid.
+Hay que tener en cuenta que la precipitación es una variable mixta, ya que habrá días con un valor exacto de 0 y otros que se encuentren en el intervalo (0,inf).
+Así pues, diseñar una/s red neuronal/es con KERAS, que sea capaz de predecir la precipitación de acuerdo con los siguientes índices:**
+
+    La ocurrencia de precipitación se evalúa con el AUC.
+    La cantidad de precipitación se evalúa con el MSE.
+    
+**Podréis valeros de todas las técnicas aprendidas hasta ahora: early stopping, regularización, backpropagation + momento, ajustar el learning rate, poner varias capas y demás. Esto no quiere decir que la red que contenga toda esta variedad de técnicas será la que obtenga un menor error. Tenéis que jugar y probar distintos diseños de redes con el fin de encontrar la que consideréis que obtendría un menor error en un dataset distinto (es decir, que tenga buena capacidad de generalización).
+Construiréis vuestro modelo usando xTrain e yTrain, y después evaluaréis el modelo en xTest. La predicción que resulte al evaluar el modelo en xTest es lo que tenéis que guardar en un fichero y lo que se envía para corrección: save(yTest, file = “yTest.rda”)
+NOTA: se considera día de lluvia si el valor de precipitación es mayor que 1, sino convertir a 0.**
+
+# Carga de la Liberaria Keras
+```{r cars}
+library(keras)
+```
+
+# 0. Carga de Datos
+```{r}
+load(file="Madrid_Alumno.rda")
+```
+# 1. PREPROCESADO DE DATOS
+
+Guardamos la occurencia
+
+```{r}
+yTrain_occ <- ifelse(yTrain<=1,0,1) #Convertir a binario
+```
+
+Normalización de los conjuntos train y test(en función de train)
+
+```{r}
+
+norm_test <- function(train,test) {
+  xtest <- matrix(0,nrow(test),ncol(test))
+  # sd y mean del xTrain para cada predictor
+  sd1 <- apply(train,2,sd)
+  mean1 <- apply(train,2,mean)
+  for (i in 1:ncol(test)) {
+    # escalamos el xTest
+    # (x - mean(x)) / sd(x)
+    xtest[,i] <- ((test[,i]-mean1[i])/sd1[i])
+  }
+  return(xtest)
+}
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+

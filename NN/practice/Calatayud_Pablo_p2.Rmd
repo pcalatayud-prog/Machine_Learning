@@ -1,0 +1,162 @@
+---
+title: "Calatayud_Pablo_p2"
+author: "Pablo Calatayud"
+date: "22/02/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Matching Learning l. Practica 02.
+
+Tarea 2.
+
+El objetivo es diseñar una red neuronal que sea capaz de predecir el valor de la precipitación mediante la información de variables de larga escala. El dataset consiste en 450 predictores y un predictando, la precipitación en Madrid. Hay que tener en cuenta que la precipitación es una variable mixta, ya que habrá días con un valor exacto de 0 y otros que se encuentren en el intervalo (0,inf). Así pues, diseñar una/s red neuronal/es con KERAS, que sea capaz de predecir la precipitación de acuerdo con los siguientes índices: La ocurrencia de precipitación se evalúa con el AUC. La cantidad de precipitación se evalúa con el MSE. Podréis valeros de todas las técnicas aprendidas hasta ahora: early stopping, regularización, backpropagation + momento, ajustar el learning rate, poner varias capas y demás. Esto no quiere decir que la red que contenga toda esta variedad de técnicas será la que obtenga un menor error. Tenéis que jugar y probar distintos diseños de redes con el fin de encontrar la que consideréis que obtendría un menor error en un dataset distinto (es decir, que tenga buena capacidad de generalización). Construiréis vuestro modelo usando xTrain e yTrain, y después evaluaréis el modelo en xTest. La predicción que resulte al evaluar el modelo en xTest es lo que tenéis que guardar en un fichero y lo que se envía para corrección: save(yTest, file = “yTest.rda”) NOTA: se considera día de lluvia si el valor de precipitación es mayor que 1, sino convertir a 0.
+
+1- ¿Cómo has preprocesado los datos y por qué (por ejemplo, has estandarizado el predictando o los predictores)? Descríbe el proceso en 3-4 líneas.
+
+2- ¿Qué topología de red neuronal has encontrado óptima para la ocurrencia de precipitación? Describe en 3-4 líneas por qué has usado esta topología e incluye el código de Keras.
+
+3- ¿Qué topología de red neuronal has encontrado óptima para la cantidad de precipitación? Describe en 3-4 líneas por qué has usado esta topología e incluye el código de Keras (mirar ejemplo)
+
+##### Carga de libreria Keras
+
+```{r}
+library(keras)
+library(tensorflow)
+library(NeuralNetTools)
+```
+### 0. Carga y Preprocesado de Datos
+#### 0.1. Carga de Datos
+```{r}
+load(file="Madrid_Alumno.rda")
+```
+#### 0.2. Procesado de Datos
+```{r}
+xTest_normalization <- function(train,test) {
+  #Input:
+  #train: train Set predictors
+  #test: test set predictors  
+    
+  #Inicializamos la matriz de test
+  
+  xtest <- matrix(0,nrow(test),ncol(test))
+  #sd y mean del xTrain para cada predictor
+  sd1 <- apply(train,2,sd)
+  mean1 <- apply(train,2,mean)
+
+  for (i in 1:ncol(test)) {
+    # escalamos el xTest
+    # (x - mean(x)) / sd(x)
+    xtest[,i] <- ((test[,i]-mean1[i])/sd1[i])
+  }
+  return(xtest)
+  
+  #Output:
+  #xtest: conjunto de test escalado
+}
+```
+
+```{r}
+#Escalamos xTest con la funcion anterior. Escalamos los datos del dataset Test a partir de los datos del dataset Train
+xTest <- xTest_normalization(xTrain,xTest)
+
+#Aplicamos la normalizacion al train set.
+xTrain <- apply(xTrain, 2, function(x) (scale(x)))
+
+```
+Veamos un poco las dimensiones del dataSet con el que vamos a trabajar. Tanto 
+para el conjunto train como test.
+```{r}
+dimensiones_train=dim(xTrain)
+dimensiones_test=dim(xTest)
+```
+
+```{r}
+cat("Train. Número de datos:",dimensiones_train[1])
+cat("Train. Número de Dimensiones:",dimensiones_train[2])
+cat("Test. Número de datos:",dimensiones_test[1])
+cat("Test. Número de Dimensiones:",dimensiones_test[2])
+```
+
+# 1. Ocurrencia de precipitacion
+
+```{r}
+yTrain_clas <- ifelse(yTrain<=1,0,1) 
+#Convertir lluvia a binario (occurencia)
+```
+
+## 1.1 Diseño, compilación y entrenamiento de la la red neuronal.
+#### 1.1.1. Diseño de la Red Neuronal por medio de un Modelo Funcional
+```{r}
+model <- keras_model_sequential() 
+#Seleccionamos una paciencia de 15 epocas.
+#Lo guardamos en el fichero correspondiente. Guardamos solamente el mejor.
+callbacks = list(callback_early_stopping(patience = 15), callback_model_checkpoint(filepath=paste0('Calatayud_Pablo_p2_occ.h5'), monitor='val_loss', save_best_only=TRUE))
+```
+
+```{r}
+inputs = layer_input(shape = dimensiones_train[2])
+x = inputs
+
+l1a = layer_dense(x,units = 10, activation = "sigmoid")
+l1b = layer_dense(x,units = 10, activation = "sigmoid")
+l1c = layer_dense(x,units = 10, activation = "sigmoid")
+
+l2 = layer_add(list(l1a,l1b))#combinacion lineal
+l2_activated = layer_activation(l2,activation = "sigmoid")
+
+l3 = layer_add(list(l2_activated,l1c))#combinacion lineal
+l3_activated = layer_activation(l3,activation = "sigmoid")
+
+outputs = layer_dense(l3_activated,units = 1, activation = "sigmoid")
+model <- keras_model(inputs = inputs, outputs = outputs)
+```
+
+#### 1.1.2. Compilación de la Red Neuronal
+```{r}
+model %>% compile(optimizer = optimizer_sgd(learning_rate = 0.1),loss = "mse",metrics = 'accuracy')
+```
+
+#### 1.1.3. Modelo del Entrenamiento de la Red Neuronal
+```{r}
+history <- model %>% fit(xTrain, yTrain_clas, epochs = 400, batch_size = 128, validation_split = 0.2, verbose = 1, callbacks=callbacks)   
+plot(history)
+```
+
+Podemos cerrar el modelo para poder entrenar otro diferente.
+```{r}
+k_clear_session()
+```
+
+Podemos cargar el modelo cerrado
+```{r}
+modelo_clasificacion <- load_model_hdf5(filepath = "Calatayud_Pablo_p2_occ.h5")
+```
+
+#### 1.2. Preddición del modelo entrenado
+
+```{r}
+yTest_ocu <- predict(modelo_clasificacion,xTest)
+
+head(yTest_ocu,5)
+tail(yTest_ocu,5)
+#Convertir probabildiad a binario
+yTest_ocu <- ifelse(yTest_ocu<=0.5,0,1)
+head(yTest_ocu,5)
+tail(yTest_ocu,5)
+
+```
+
+```{r}
+plot_model(modelo_clasificacion, to_file='model_plot.png', show_shapes=True, show_layer_names=True)
+```
+
+
+
+
+
+
+
